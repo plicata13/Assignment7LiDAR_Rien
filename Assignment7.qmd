@@ -1,0 +1,263 @@
+---
+title: "Assignment 7"
+format: html
+editor: visual
+---
+
+Ctrl + Alt + i = new chunk
+
+```{r}
+
+install.packages("lidR")
+library(units)
+library(lidR)
+library(terra)
+library(mapview)
+
+plot_crossection <- function(las,
+                             p1 = c(min(las@data$X), mean(las@data$Y)),
+                             p2 = c(max(las@data$X), mean(las@data$Y)),
+                             width = 4, colour_by = NULL)
+{
+  require(ggplot2)
+  colour_by <- rlang::enquo(colour_by)
+  data_clip <- clip_transect(las, p1, p2, width)
+  p <- ggplot(data_clip@data, aes(X,Z)) + 
+    geom_point(size = 0.5) + 
+    coord_equal() + 
+    theme_minimal()
+  
+  if (!is.null(colour_by))
+    p <- p + 
+    aes(color = !!colour_by) + labs(color = "")
+  
+  return(p)
+}
+```
+
+**Part 1**
+
+1.  Download .LAS file "Nicole Rien.las"
+
+```{r}
+
+LASfile <- "C:/Users/Nicole/Desktop/Winter24TRU/4480EnvMod/Assignment 7/Nicole Rien.las"
+las <- readLAS(LASfile)  
+las
+
+plot(las)
+
+```
+
+1.  a\) How many points are there? = **1.9 million points**
+
+```{r}
+las <- readLAS(LASfile)  
+las
+
+```
+
+1.  b\) Maximum elevation in point cloud? **= 1393.72**
+
+```{r}
+View(las@data)
+
+max_elevation <- max(las@data$Z)
+
+```
+
+2.  a\) Classify ground points with CSF
+
+    & produce DEM using TIN
+
+```{r}
+
+las_ground <- classify_ground(las, algorithm = csf(
+  sloop_smooth = TRUE, class_threshold = 1,
+  cloth_resolution = 1, time_step = 1))
+
+las_ground2 <- classify_ground(las, algorithm = csf())
+##they both seemed to have worked
+
+dem <- rasterize_terrain(las_ground, res = 1, algorithm = tin())
+plot(dem)
+```
+
+2.  b\) Classify ground points - PMF algorithm
+
+    & produce DEM with TIN
+
+```{r}
+?classify_ground
+
+las_ground3 <- classify_ground(las, algorithm = pmf(ws = 3, th = 0.1))
+las_ground3 <- classify_ground(las, algorithm = pmf(ws = 5, th = 0.05))
+
+dem3 <- rasterize_terrain(las_ground3, res = 1, algorithm = tin())
+plot(dem3)
+```
+
+2.  c\) Classify ground points CSF
+
+    & DEM using inverse distance weighting algorithm
+
+```{r}
+?rasterize_terrain
+
+las_ground2 <- classify_ground(las, algorithm = csf())
+
+dem_idw <- rasterize_terrain(las_ground2, algorithm = knnidw(k = 10L, p = 2))
+plot(dem_idw)
+```
+
+2.  d\) How does PMF work?
+
+    Main job is to help identify and separate ground points from other points. It applies a mathematical operation called a "morphological filter" to these points to identify ground points. Allows users to choose their own values ws and th.
+
+    |      |                                                                                                                                                                                       |
+    |-----------|-------------------------------------------------------------|
+    | `ws` | numeric. Sequence of windows sizes to be used in filtering ground returns. The values must be positive and in the same units as the point cloud (usually meters, occasionally feet).  |
+    | `th` | numeric. Sequence of threshold heights above the parameterized ground surface to be considered a ground return. The values must be positive and in the same units as the point cloud. |
+
+3.  a\) Normalize point cloud (inverse distance weighting algorithm)
+
+    CHM (point-to-raster)
+
+```{r}
+
+?normalize_height
+?rasterize_canopy
+
+las_norm2 <- normalize_height(las_ground, algorithm = knnidw())
+
+chm2 <- rasterize_canopy(las_norm2, res = 1, algorithm = p2r())
+col <- height.colors(25)
+plot(chm2, col = col)
+
+```
+
+3.  b\) Normalize point cloud (TIN)
+
+    CHM (TIN, dsmtin)
+
+```{r}
+
+ground <- filter_ground(las_ground)
+plot(ground)
+
+las_norm <- normalize_height(las_ground, algorithm = tin())
+ground_norm <- filter_ground(las_norm)
+
+View(las_norm@data)
+plot(las_norm)
+
+##XX dsm <- rasterize_canopy(las_ground, res = 1, algorithm = dsmtin(max_edge = 7.5))
+##XX chm <- rasterize_canopy(las_norm, res = 1, algorithm = dsmtin(max_edge = 7.5))
+
+chm <- rasterize_canopy(las_norm, res = 1, algorithm = dsmtin())
+col <- height.colors(25)
+plot(chm, col = col)
+```
+
+3.  c\) Normalize point cloud (TIN)
+
+    CHM (point-to-raster)
+
+```{r}
+
+las_norm3 <- normalize_height(las_ground, algorithm = tin())
+
+chm3 <- rasterize_canopy(las_norm2, res = 1, algorithm = p2r())
+col <- height.colors(25)
+plot(chm3, col = col)
+
+```
+
+3.  d\) Inverse distance weighting algorithm
+
+The knnidw algorithim within the function [normalize_height](http://127.0.0.1:18925/help/library/lidR/help/normalize_height). It implements an algorithm for spatial interpolation. Interpolation is done using a k-nearest neighbour (KNN) approach with an inverse-distance weighting (IDW). IDW assumes that things closer together are more similar than things farther apart, and uses this information to interpolate points that do not yet have a value. Like an educated guess.
+
+4.  a\) ITS with Dalponte 2016
+
+```{r}
+
+ttops <- locate_trees(chm, lmf(5))
+mapview(ttops)
+
+las_its_dalponte <- segment_trees(las_norm, dalponte2016(chm, ttops))
+plot(las_its_dalponte, color = "treeID", size=3)
+
+```
+
+4.  b\) ITS with Li et al. 2012
+
+```{r}
+
+las_its_li <- segment_trees(las_norm, algorithm = li2012())
+plot(las_its_li, color = "treeID")
+
+```
+
+4.  c\) ITS with Silva 2016
+
+```{r}
+
+?segment_trees
+
+ttops2 <- locate_trees(chm, lmf(4, 2))
+las_its_silva   <- segment_trees(las_norm, silva2016(chm, ttops2))
+plot(las_its_silva, color = "treeID")
+
+```
+
+4.  d\) Describe Silva 2016
+
+This functions is made to be used in [segment_trees](http://127.0.0.1:18925/help/library/lidR/help/segment_trees). It implements an algorithm for tree segmentation based on Silva et al. (2016) (see reference). This is a simple method based on seed + voronoi tesselation (equivalent to nearest neighbour). This algorithm is implemented in the package `rLiDAR`. This version is not the version from `rLiDAR`. It is code written from the original article by the lidR authors and is considerably (between 250 and 1000 times) faster.
+
+5.  \# of trees & density for all 3 segmented point clouds
+
+```{r}
+
+metrics_dal <- crown_metrics(las_its_dalponte, .stdmetrics)
+install_unit("stems")
+n_trees_d <- set_units(nrow(metrics_dal), "stems")
+n_trees_d
+## = 972 stems
+
+st_area(las_its_dalponte)
+pc_area<- set_units(st_area(las_its_dalponte), "ha")
+
+n_trees_d / pc_area
+round(n_trees_d / pc_area)
+##252 stems/ha
+
+##
+metrics_li <- crown_metrics(las_its_li, .stdmetrics)
+install_unit("stems_l")
+n_trees_l <- set_units(nrow(metrics_li), "stems_l")
+n_trees_l
+## = 1722 stems
+
+st_area(las_its_li)
+pc_area<- set_units(st_area(las_its_li), "ha")
+
+n_trees_l / pc_area
+round(n_trees_l / pc_area)
+##447 stems/ha
+
+##
+metrics_s <- crown_metrics(las_its_silva, .stdmetrics)
+install_unit("stems_si")
+n_trees_s <- set_units(nrow(metrics_s), "stems_si")
+n_trees_s
+## = 1334 stems
+
+st_area(las_its_silva)
+pc_area<- set_units(st_area(las_its_silva), "ha")
+
+n_trees_s / pc_area
+round(n_trees_s / pc_area)
+##346 stems/ha
+
+
+```
